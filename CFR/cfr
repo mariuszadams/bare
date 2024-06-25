@@ -1,0 +1,102 @@
+#!/bin/bash
+
+Help()
+{
+   # Display Help
+   echo
+   echo "Syntax: $0 -a|-h|-v|-y|keyword"
+   echo
+   echo "(P) mariuszadams - The Cloudforms runner."
+   echo "options:"
+   echo " -a|-A    Run all instances"
+   echo " -h|-H    Print this help info"
+   echo " -v|-V    view instance details only, do not run"
+   echo " -y|-Y    confirm each instance run"
+   echo " keyword  run only instance with keyword in description"
+   echo
+}
+#if no arguments are given, print help and exit
+if [ $# -eq 0 ] || [[ $1 =~ ^\-[Hh]$ ]]; then
+   Help; exit
+ fi
+
+#temp dir and file definition - adjust to /tmp or env var if permission issue
+tmpdir="tmp"
+tmpfile="${tmpdir}/cf-instance.tmp"
+
+#if temp dir does not exist it is created
+if [ ! -d $tmpdir ]; then
+  mkdir $tmpdir
+fi
+
+#Authorize to CF
+#HASH='username:password'
+HASH=$(grep -v '^#' .cf-hash | head -n 1 | tr -d '\r\n')
+AUTH_TOKEN=$(curl -ks "https://labs.opentlc.com/api/auth" -u "$HASH" | jq -r .auth_token)
+
+#curl -k -H "X-Auth-Token: $AUTH_TOKEN" "https://labs.opentlc.com/api/service_templates"
+##-d "action=start" -d "resource_type=AutomationRequest"
+
+#get service instances
+SRV=$(curl -ks -H "X-Auth-Token: $AUTH_TOKEN" "https://labs.opentlc.com/api/services")
+NO=$(echo $SRV | jq -r .subcount)
+echo "$(date) No. of instances: $NO"
+
+#loop over instances and show name, description and serviceExtensions
+for n in $(seq 1 $NO); do
+ #get href of current service instance
+ INSTANCE=$( echo $SRV | jq -r .resources[$((n-1))].href)
+ #get name and description of current service instance
+ curl -ks -X GET -H "X-Auth-Token: $AUTH_TOKEN" -H "Content-Type: application/json" \
+      "$INSTANCE?attributes=custom_attributes" > $tmpfile
+ NAME=$(jq -r '.name' $tmpfile)
+ DESC=$(jq -r '.description' $tmpfile)
+ SRVX=$(jq -r '.custom_attributes[] | select(.name=="serviceExtensions").value' $tmpfile)
+ RETR=$(jq -r '.retires_on' $tmpfile)
+ INFO=$(jq -r '.custom_attributes[]' $tmpfile| egrep 'cluster admin|lab-user' |grep -v "serialized")
+ INFC=$(jq -r '.custom_attributes[]' $tmpfile| egrep '_console_url' | head -n 1)
+
+   #if $1 not in desc continue
+    if [[ $DESC != *$1* ]] && ! [[ $1 =~ ^\-[AaVvYy]$ ]]; then
+     echo "skipping $DESC instance $NAME";  continue
+    fi
+
+ echo "$n. $DESC * Instance: $NAME"
+ echo "* retires on: $RETR * serviceExtensions: $SRVX"
+ echo "* console: $INFC"
+ echo "* CLI: $INFO"
+
+ #if -v flag is set, view only - don't perform action
+ if [[ $1 =~ ^\-[Vv]$ ]]; then continue; fi
+ if [[ $1 =~ ^\-[Yy]$ ]]; then
+     echo -n "Press Y to run/extend..."
+     read key
+     if ! [[ $key =~ ^[Yy]$ ]]; then 
+       continue
+     fi
+ fi
+
+ #some possible actions:
+ ##"extend runtime" - works
+ ##"start instances" - works
+ ##"stop instances"
+ ##"extend lifetime" - invokes dialog form
+ACTIONS=("extend runtime")
+ 
+ #for action in actions
+ for ACTION in "${ACTIONS[@]}"; do
+   echo -n "==> $DESC $ACTION" 
+   EXT="{  \"action\":    \"$ACTION\",
+           \"resources\": [  { \"href\":\"$INSTANCE\" }  ]
+        }"
+
+   #create suspense
+   sleep 1
+   CURL=$(curl -ks -X POST -H "X-Auth-Token: $AUTH_TOKEN" -H "Content-Type: application/json" -d "$EXT" "$INSTANCE")
+   if [[ $CURL =~ 'success":true'.* ]]; then
+     echo " success!"
+   else
+     echo " FAILED: $CURL"
+   fi
+ done
+done

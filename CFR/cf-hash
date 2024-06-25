@@ -1,0 +1,5 @@
+### Cloudforms script sample hash file for API authentication
+### format:  username:password
+username:password
+### Replace the above username:password with appropriate values
+### and save as .cf-hash

@@ -1,0 +1,9 @@
+tmp/
+*/tmp/
+*.tmp
+*.swp
+/aws-eks
+oc*
+rosa*
+.*hash
+.*token
